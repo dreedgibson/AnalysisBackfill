@@ -19,45 +19,55 @@ using System;
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-class AFSystemHelper
+public class PIConnection
 {
+    
+    public static PISystem ConnectAF(string PISystemName)
     // Connect to PI AF Server
-    public static void Connect(string PISystemName, string AFDatabaseName)
     {
         //connections
         PISystems allAFServers = new PISystems();
         PISystem aAFServer = allAFServers[PISystemName];
 
         try
-        {    
+        {
             aAFServer.Connect();
         }
         catch (Exception e)
         {
             Console.WriteLine("{0}\nPISystem '{1}' was not found. List of PI Systems in KST:", e.Message, PISystemName);
             foreach (var it in allAFServers)
+            {
                 Console.WriteLine("\t" + it.Name);
-            Environment.Exit(0);
-            return;
+            }
         }
+        return aAFServer;
+    }
+
+    public static object[] ConnectAF(string PISystemName, string AFDatabaseName)
+    // Connect to PI AF Database
+    {
+        PISystem aAFServer = ConnectAF(PISystemName);
+        AFDatabase aAFDatabase = null;
 
         try
         {
-            AFDatabase aAFDatabase = aAFServer.Databases[AFDatabaseName];
-            var name = aAFDatabase.Name;
+            aAFDatabase = aAFServer.Databases[AFDatabaseName];
         }
         catch(Exception e)
         {
             Console.WriteLine("{0}\nAF Database '{1}' was not found. List of AF Databases in {2}:", e.Message, AFDatabaseName, PISystemName);
             foreach (var it in aAFServer.Databases)
+            {
                 Console.WriteLine("\t" + it.Name);
-            Environment.Exit(0);
-            return;
+            }
         }
+        object[] Connection = { aAFServer, aAFDatabase };
+        return Connection;
     }
 
+    public static PIServer ConnectDA(string PIServerName)
     // Connect to PI Data Archive
-    public static void Connect(string PIServerName)
     {
         //connections
         PIServers allPIServers = new PIServers();
@@ -71,9 +81,10 @@ class AFSystemHelper
         {
             Console.WriteLine("{0}\nPIServer '{1}' was not found. List of PI Servers in KST:", e.Message, PIServerName);
             foreach (var it in allPIServers)
+            {
                 Console.WriteLine("\t" + it.Name);
-            Environment.Exit(0);
-            return;
+            }
         }
+        return aPIServer;
     }
 }

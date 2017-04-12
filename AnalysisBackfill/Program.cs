@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using OSIsoft.AF.PI;
 using OSIsoft.AF.Search;
 using System.Threading;
+using AnalysisUtil;
 
 /*
  *  Copyright (C) 2017  Keith Fong
@@ -35,18 +36,16 @@ namespace AnalysisBackfill
         static void Main(string[] args)
         {
             //define variables
-            string user_path = null;
-            string user_serv = null;
-            string user_db = null;
-            string user_analysisfilter = null;
+            string elementTemplateName = null;
+            string fullPath = null;
+            string elementName = null;
+            string analysisName = "*";
+            string user_startTime = null;
+            string user_endTime = null;
             string user_mode = null;
 
-            PIServer aPIServer = null;
-            PISystems aSystems = new PISystems();
-            PISystem aSystem = null;
-            AFAnalysisService aAnalysisService = null;
-            AFDatabase aDatabase = null;
-            List<AFElement> foundElements = new List<AFElement>(); 
+            AFElement rootElement = new AFElement();
+            List<AFElement> foundElements = new List<AFElement>();
             List<AFAnalysis> foundAnalyses = new List<AFAnalysis>();
             IEnumerable<AFAnalysis> elemAnalyses = null;
 
@@ -60,77 +59,79 @@ namespace AnalysisBackfill
                             + "\n\tAnalysisBackfill.exe \\\\AFServer\\AFDatabase\\pathToElement\\AFElement AnalysisNameFilter StartTime EndTime Mode"
                             + "\n This utility supports two modes: backfill and recalc.  Backfill will fill in data gaps only.  Recalc will replace all values.  Examples:"
                             + "\n\tAnalysisBackfill.exe \\\\AF1\\TestDB\\Plant1\\Pump1 FlowRate_*Avg '*-10d' '*' recalc"
-                            + "\n\tAnalysisBackfill.exe \\\\AF1\\TestDB\\Plant1\\Pump1 *Rollup '*-10d' '*' backfill";
-            
-            //bad input handling & help
-            if (args.Length < 5 || args.Contains("?"))
-            {
-                Console.WriteLine(help_message);
-                Environment.Exit(0);
-            }
+                            + "\n\tAnalysisBackfill.exe \\\\AF1\\TestDB\\Plant1\\Pump1 *Rollup '*-10d' '*' backfill"
+                            + "\n\n /elementtemplate, /rootelement, /elementname, /analysisname, /starttime, /endtime, /mode";
 
             try
             {
                 //parse inputs and connect
-                user_path = args[0];
-                var inputs = user_path.Split('\\');
-                user_serv = inputs[2];
-                user_db = inputs[3];
+                foreach (var arg_n in args)
+                {
+                    var arg = arg_n.ToLower();
+                    if (arg.Contains("/elementtemplate")) elementTemplateName = arg.Split(':')[1];
+                    if (arg.Contains("/fullpath")) fullPath = arg.Split(':')[1];
+                    if (arg.Contains("/elementname")) elementName = arg.Split(':')[1];
+                    if (arg.Contains("/analysisName")) analysisName = arg.Split(':')[1];
+                    if (arg.Contains("/starttime")) user_startTime = arg.Split(':')[1];
+                    if (arg.Contains("/endtime")) user_endTime = arg.Split(':')[1];
+                    if (arg.Contains("/mode")) user_mode = arg.Split(':')[1];
+                }
 
-                //connect
-                AFSystemHelper.Connect(user_serv, user_db);
-                aSystem = aSystems[user_serv];
-                aDatabase = aSystem.Databases[user_db];
-                aAnalysisService = aSystem.AnalysisService;
+                var pathArray = fullPath.Split('\\');
+                var user_serv = pathArray[2];
+                var user_db = pathArray[3];
+                var connectionVars = PIConnection.ConnectAF(user_serv, user_db);
+                PISystem aSystem = (PISystem)connectionVars[0];
+                AFDatabase aDatabase = (AFDatabase)connectionVars[1];
+                AFAnalysisService aAnalysisService = aSystem.AnalysisService;
 
-                /* check versions.  need to write this. 
-                aSystem.ServerVersion
+                var prelength = user_serv.Length + user_db.Length;
+                var user_rootElement = fullPath.Substring(prelength + 4, fullPath.Length - prelength - 4);
+                if (user_rootElement != "")
+                    rootElement = (AFElement)AFObject.FindObject(user_rootElement, aDatabase);
+
+                //bad input handling & help
+                if (args.Contains("?") || user_startTime == null || user_endTime == null || user_mode == null)
+                {
+                    Console.WriteLine(help_message);
+                    Environment.Exit(0);
+                }
+
+                //check versions
+                /*
+                aSystem.ServerVersion;
                 aSystems.Version
                 aPIServer.ServerVersion
                 */
 
+                //time range
+                AFTime startTime = new AFTime(user_startTime.Trim('\''));
+                AFTime endTime = new AFTime(user_endTime.Trim('\''));
+                backfillPeriod = new AFTimeRange(startTime, endTime);
+
+                mode = ParseInputs.DetermineMode(user_mode);
+
+                #region findelements
                 //find AFElements
-                //will eventually include element search filter as well
-                if (inputs.Length == 4)
-                { //all elements in database
+
+                //AFElement.FindElements(aDatabase, )
+
+                if (user_rootElement == "") //all elements in database
                     foundElements = AFElement.FindElements(aDatabase, null, null, AFSearchField.Name, true, AFSortField.Name, AFSortOrder.Ascending, 1000).ToList();
-                }
-                else
-                { //single element
-                    var prelength = user_serv.Length + user_db.Length;
-                    var path1 = user_path.Substring(prelength + 4, user_path.Length - prelength - 4);
-                    foundElements.Add((AFElement)AFObject.FindObject(path1, aDatabase));
-                }
-
-                //other inputs
-                user_analysisfilter = args[1];
-                AFTime backfillStartTime = new AFTime(args[2].Trim('\''));
-                AFTime backfillEndTime = new AFTime(args[3].Trim('\''));
-                backfillPeriod = new AFTimeRange(backfillStartTime, backfillEndTime);
-
-                //user_mode
-                user_mode = args[4];
-                switch (user_mode.ToLower())
-                {
-                    case "recalc":
-                        mode = AFAnalysisService.CalculationMode.DeleteExistingData;
-                        break;
-                    case "backfill":
-                        mode = AFAnalysisService.CalculationMode.FillDataGaps;
-                        break;
-                    default:
-                        Console.WriteLine("Invalid mode specified.  Supported modes: backfill, recalc");
-                        Environment.Exit(0);
-                        break;
-                }
+                else if (user_rootElement != "" && elementName != "") 
+                    {
+                        AFElement rootElement = (AFElement)AFObject.FindObject(user_rootElement, aDatabase);
+                        foundElements = AFElement.FindElements(aDatabase, rootElement, elementName, AFSearchField.Name, true, AFSortField.Name, AFSortOrder.Ascending, 1000).ToList();
+                    }
+                else //single element
+                    foundElements.Add((AFElement)AFObject.FindObject(user_rootElement, aDatabase));
+                #endregion
 
                 Console.WriteLine("Requested backfills/recalculations:");
-
                 foreach (AFElement elem_n in foundElements)
                 {
-                    
-                    //find analyses
-                    String analysisfilter = "Target:=\"" + elem_n.GetPath(aDatabase) + "\" Name:=\"" + user_analysisfilter + "\"";
+                    #region FindAnalyses
+                    String analysisfilter = "Target:=\"" + elem_n.GetPath(aDatabase) + "\" Name:=\"" + analysisName + "\"";
                     AFAnalysisSearch analysisSearch = new AFAnalysisSearch(aDatabase, "analysisSearch", AFAnalysisSearch.ParseQuery(analysisfilter));
                     elemAnalyses = analysisSearch.FindAnalyses(0, true).ToList();
 
@@ -139,9 +140,7 @@ namespace AnalysisBackfill
                         + "\n\tAnalyses (" + elemAnalyses.Count() + "):");
                     
                     if (elemAnalyses.Count() == 0)
-                    {
                         Console.WriteLine("\t\tNo analyses on this AF Element match the analysis filter.");
-                    }
                     else
                     {
                         foundAnalyses.AddRange(elemAnalyses);
@@ -157,11 +156,14 @@ namespace AnalysisBackfill
 
                     }
                     */
-
+                    #endregion
                 }
+
+                #region QueueAnalyses
                 Console.WriteLine("\nTime range: " + backfillPeriod.ToString() + ", " + "{0}d {1}h {2}m {3}s."
                             , backfillPeriod.Span.Days, backfillPeriod.Span.Hours, backfillPeriod.Span.Minutes, backfillPeriod.Span.Seconds);
                 Console.WriteLine("Mode: " + user_mode + "=" + mode.ToString());
+                
                 //implement wait time
                 Console.WriteLine("\nA total of {0} analyses will be queued for processing in 10 seconds.  Press Ctrl+C to cancel.", foundAnalyses.Count);
                 DateTime beginWait = DateTime.Now;
@@ -170,6 +172,7 @@ namespace AnalysisBackfill
                     Console.Write(".");
                     Thread.Sleep(250);
                 }
+
                 //no status check
                 Console.WriteLine("\n\nAll analyses have been queued.\nThere is no status check after the backfill/recalculate is queued (until AF 2.9.0). Please verify by using other means.", foundAnalyses.Count);
 
@@ -188,7 +191,7 @@ namespace AnalysisBackfill
 
                     //Might be able to add a few check mechanisms using AFAnalysis.GetResolvedOutputs and the number of values in AFTimeRange
                 }
-
+                #endregion
             }
             catch (Exception ex)
             {
@@ -196,14 +199,5 @@ namespace AnalysisBackfill
                 Environment.Exit(0);
             }
         }
-    }
-}
-
-
-public static class AFAnalysisCustom
-{
-    public static void StaticToAnalysisDR(PISystem myAFServ, AFElement myElement, AFAnalysis myAnalysis)
-    {
-        //to use later 
     }
 }
